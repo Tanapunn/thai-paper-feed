@@ -1,36 +1,101 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🧠 Thai AI Paper Feed
 
-## Getting Started
+เว็บฟีดสรุปเปเปอร์ AI ล่าสุดจาก arXiv เป็น**ภาษาไทย** สไตล์ "เพื่อนแปะสรุปมาให้อ่านเล่น" — สั้น กระชับ
+เน้น **"เขาทำอะไรได้"** มากกว่ารายละเอียดเทคนิค ให้เกิดอาการ "อ่อออ ทำแบบนี้ได้ด้วย" อ้างอิงโทนแบบ Blognone
 
-First, run the development server:
+คนไทยสายเทคหลายคนไม่กล้าเริ่มอ่านเปเปอร์เพราะรู้สึกว่ามันคือ "งาน" — โปรเจกต์นี้แก้ปัญหานั้นด้วยการทำให้อ่านจบใน 5 วินาที
+
+## ✨ Demo
+
+| ฟีดหน้าแรก | หน้ารายละเอียด | Admin (ดึงเปเปอร์ใหม่) |
+|---|---|---|
+| ![feed](docs/screenshots/feed.png) | ![detail](docs/screenshots/detail.png) | ![admin](docs/screenshots/admin.png) |
+
+## 🧩 วิธีทำงานของระบบ
+
+```
+arXiv API (cs.CL + cs.AI, ล่าสุด 20 ใบ)
+   → Gemini API สรุปเป็นภาษาไทย (พาดหัว / สรุป / จุดว้าว / แท็ก)
+      → Supabase (upsert กันซ้ำด้วย arxiv id)
+         → Next.js แสดงผลเป็นฟีดการ์ด
+```
+
+กดปุ่มที่หน้า `/admin` เพื่อสั่งดึงเปเปอร์ใหม่ด้วยตัวเอง (manual, ยังไม่มี auto-run)
+
+## 🛠 Tech Stack
+
+| ส่วน | ใช้ |
+|---|---|
+| Frontend + Backend | Next.js 16 (App Router) |
+| Database | Supabase (Postgres) |
+| LLM | Gemini API (`gemini-3.1-flash-lite`) |
+| แหล่งเปเปอร์ | arXiv API |
+| Styling | Tailwind CSS v4, Noto Sans Thai |
+| Deploy | Vercel |
+
+## 🚀 วิธีรันโปรเจกต์
+
+### 1. Clone และติดตั้ง dependencies
+
+```bash
+git clone https://github.com/Tanapunn/thai-paper-feed.git
+cd thai-paper-feed
+npm install
+```
+
+### 2. ตั้งค่า environment variables
+
+คัดลอก `.env.example` เป็น `.env.local` แล้วใส่ค่าจริง:
+
+```bash
+cp .env.example .env.local
+```
+
+```
+GEMINI_API_KEY=...              # จาก https://aistudio.google.com
+NEXT_PUBLIC_SUPABASE_URL=...     # จาก Supabase Project Settings > API
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...    # ใช้ฝั่ง server (ingest) เท่านั้น ห้ามเผยแพร่
+```
+
+### 3. สร้างตารางใน Supabase
+
+เปิด Supabase SQL Editor แล้วรันไฟล์ [`supabase/schema.sql`](supabase/schema.sql)
+
+### 4. รัน dev server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+เปิด [http://localhost:3000](http://localhost:3000) ดูฟีด และ [http://localhost:3000/admin](http://localhost:3000/admin) เพื่อดึงเปเปอร์ใหม่ครั้งแรก
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 📁 โครงสร้างที่สำคัญ
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+src/
+  lib/
+    arxiv.ts          # ดึง + parse Atom XML จาก arXiv API
+    gemini.ts          # เรียก Gemini สรุปเป็นภาษาไทย (มี retry/backoff กัน 429)
+    papers.ts           # query ข้อมูลจาก Supabase
+    supabase/
+      client.ts         # Supabase client (anon key, ฝั่ง browser/server อ่านอย่างเดียว)
+      server.ts          # Supabase admin client (service role key, ใช้ตอน ingest)
+  app/
+    page.tsx             # หน้าฟีด
+    paper/[id]/page.tsx  # หน้ารายละเอียด
+    admin/page.tsx        # หน้ากดดึงเปเปอร์ใหม่
+    api/ingest/route.ts   # pipeline: arXiv → Gemini → Supabase upsert
+supabase/schema.sql        # SQL สร้างตาราง papers
+```
 
-## Learn More
+## ⚠️ ข้อจำกัดของเบต้านี้
 
-To learn more about Next.js, take a look at the following resources:
+- ดึงเฉพาะ abstract จาก arXiv หมวด `cs.CL` และ `cs.AI` เท่านั้น
+- รันแบบ manual ผ่านหน้า `/admin` ยังไม่มี auto-run รายวัน (เก็บไว้เฟสถัดไป)
+- ยังไม่มีโมเดล fine-tune ของตัวเอง (ใช้ Gemini API สรุปให้)
+- Gemini free tier ของแต่ละโปรเจกต์/คีย์มี quota (RPD) ต่างกัน แนะนำเช็คที่ [Google AI Studio](https://aistudio.google.com) ก่อนหากเจอ error 429
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 📄 License
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Personal project สำหรับพอร์ตโฟลิโอ ไม่ได้ตั้งใจ license แบบ opensource เป็นทางการ
