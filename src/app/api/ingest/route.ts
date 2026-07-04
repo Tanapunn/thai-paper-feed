@@ -3,6 +3,9 @@ import { fetchLatestPapers } from "@/lib/arxiv";
 import { summarizePaper } from "@/lib/gemini";
 import { supabaseAdmin } from "@/lib/supabase/server";
 
+// Vercel Hobby plan hard cap for serverless functions.
+export const maxDuration = 60;
+
 const DELAY_BETWEEN_GEMINI_CALLS_MS = 4000;
 
 function sleep(ms: number): Promise<void> {
