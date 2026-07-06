@@ -58,11 +58,23 @@ function parseEntry(entry: RawEntry): ArxivPaper {
   };
 }
 
-export async function fetchLatestPapers(maxResults = 20): Promise<ArxivPaper[]> {
+export type FetchPapersOptions = {
+  start?: number;
+  sortBy?: "submittedDate" | "relevance" | "lastUpdatedDate";
+  sortOrder?: "ascending" | "descending";
+};
+
+export async function fetchLatestPapers(
+  maxResults = 20,
+  options: FetchPapersOptions = {}
+): Promise<ArxivPaper[]> {
+  const { start = 0, sortBy = "submittedDate", sortOrder = "descending" } = options;
+
   const params = new URLSearchParams({
     search_query: "cat:cs.CL OR cat:cs.AI",
-    sortBy: "submittedDate",
-    sortOrder: "descending",
+    sortBy,
+    sortOrder,
+    start: String(start),
     max_results: String(maxResults),
   });
 

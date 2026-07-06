@@ -8,7 +8,7 @@ export type GeminiSummary = {
   tags: string[];
 };
 
-const SYSTEM_PROMPT = `คุณคือเพื่อนสายเทคที่ชอบอ่าน paper AI แล้วเอามาเล่าให้เพื่อนฟังแบบสั้นๆ สนุกๆ
+export const SYSTEM_PROMPT = `คุณคือเพื่อนสายเทคที่ชอบอ่าน paper AI แล้วเอามาเล่าให้เพื่อนฟังแบบสั้นๆ สนุกๆ
 
 กติกาการเขียนภาษาไทย (สำคัญมาก):
 - โทน = เพื่อนเล่าให้ฟัง ไม่ใช่สรุปวิชาการ ไม่ใช่ภาษาข่าวทางการ
@@ -25,7 +25,7 @@ const SYSTEM_PROMPT = `คุณคือเพื่อนสายเทคท
   "tags": ["แท็ก", "2-4", "อัน"]
 }`;
 
-function buildUserPrompt(titleEn: string, abstractEn: string): string {
+export function buildUserPrompt(titleEn: string, abstractEn: string): string {
   return `Title: ${titleEn}\n\nAbstract: ${abstractEn}`;
 }
 
