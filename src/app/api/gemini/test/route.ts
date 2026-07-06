@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 import { fetchLatestPapers } from "@/lib/arxiv";
 import { summarizePaper } from "@/lib/gemini";
 
+// Dev-only debug route from STEP 2 — never burns Gemini quota from production traffic.
 export async function GET() {
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ error: "Not available in production" }, { status: 404 });
+  }
+
   const papers = await fetchLatestPapers(3);
 
   const results = [];

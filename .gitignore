@@ -41,5 +41,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-.vercel
-.env*
+# phase B dataset outputs (generated, can be large)
+phase-b/data/*
+!phase-b/data/.gitkeep
