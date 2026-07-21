@@ -44,3 +44,7 @@ next-env.d.ts
 # phase B dataset outputs (generated, can be large)
 phase-b/data/*
 !phase-b/data/.gitkeep
+
+# python
+__pycache__/
+*.pyc
