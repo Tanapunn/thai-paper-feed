@@ -7,6 +7,7 @@ type IngestResult = {
   skippedExisting: number;
   inserted: number;
   insertedIds: string[];
+  remaining: number;
   failed: { id: string; error: string }[];
 };
 
@@ -28,13 +29,30 @@ export default function AdminPage() {
         method: "POST",
         headers: { Authorization: `Bearer ${secret}` },
       });
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error ?? `HTTP ${response.status}`);
+      // A timeout (504) returns an empty/non-JSON body, so parse defensively
+      // instead of letting response.json() throw a cryptic error.
+      const text = await response.text();
+      let data: IngestResult | { error?: string } | null = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = null;
       }
 
-      setResult(data);
+      if (!response.ok) {
+        const hint =
+          response.status === 504
+            ? " — ตัวดึงทำงานนานเกิน 60 วิ ลองกดอีกครั้ง (ระบบทำต่อจากที่ค้าง)"
+            : "";
+        const message =
+          (data && "error" in data && data.error) || `HTTP ${response.status}${hint}`;
+        throw new Error(message);
+      }
+      if (!data) {
+        throw new Error("เซิร์ฟเวอร์ไม่ตอบเป็น JSON (อาจ timeout) — ลองกดอีกครั้ง");
+      }
+
+      setResult(data as IngestResult);
       setStatus("done");
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : String(err));
@@ -71,6 +89,11 @@ export default function AdminPage() {
           <p>ดึงมาทั้งหมด: {result.fetched} ใบ</p>
           <p>มีอยู่แล้ว (ข้าม): {result.skippedExisting} ใบ</p>
           <p className="font-semibold text-emerald-700">เพิ่มใหม่: {result.inserted} ใบ</p>
+          {result.remaining > 0 && (
+            <p className="mt-1 font-medium text-amber-700">
+              ยังเหลืออีก {result.remaining} ใบ — กด &quot;ดึงเปเปอร์ใหม่&quot; อีกครั้งเพื่อทำต่อ
+            </p>
+          )}
           {result.failed.length > 0 && (
             <div className="mt-3 rounded-lg bg-red-50 p-3 text-red-700">
               <p className="font-semibold">ล้มเหลว {result.failed.length} ใบ:</p>

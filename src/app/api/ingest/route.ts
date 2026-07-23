@@ -8,6 +8,12 @@ export const maxDuration = 60;
 
 const DELAY_BETWEEN_GEMINI_CALLS_MS = 4000;
 
+// Each new paper costs ~4s (rate-limit delay) + Gemini latency, so we can only
+// finish a handful before hitting maxDuration (60s). Cap the batch per request
+// and report how many are left — the caller (admin button / cron) just runs again,
+// and already-ingested papers are skipped, so the backlog drains over a few runs.
+const MAX_PER_RUN = 8;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -46,10 +52,14 @@ export async function POST(request: NextRequest) {
   }
 
   const existingIds = new Set((existingRows ?? []).map((row) => row.id as string));
-  const newPapers = papers.filter((p) => !existingIds.has(p.id));
+  const allNew = papers.filter((p) => !existingIds.has(p.id));
+  // Process at most MAX_PER_RUN this invocation so we return before the timeout.
+  const newPapers = allNew.slice(0, MAX_PER_RUN);
+  const remaining = allNew.length - newPapers.length;
 
   console.log(
-    `[ingest] fetched ${papers.length}, already in DB: ${existingIds.size}, new: ${newPapers.length}`
+    `[ingest] fetched ${papers.length}, already in DB: ${existingIds.size}, ` +
+      `new: ${allNew.length}, processing: ${newPapers.length}, remaining after: ${remaining}`
   );
 
   const inserted: string[] = [];
@@ -101,6 +111,7 @@ export async function POST(request: NextRequest) {
     skippedExisting: existingIds.size,
     inserted: inserted.length,
     insertedIds: inserted,
+    remaining,
     failed,
   });
 }
