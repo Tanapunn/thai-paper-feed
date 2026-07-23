@@ -64,6 +64,10 @@ export type FetchPapersOptions = {
   sortOrder?: "ascending" | "descending";
 };
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function fetchLatestPapers(
   maxResults = 20,
   options: FetchPapersOptions = {}
@@ -78,15 +82,27 @@ export async function fetchLatestPapers(
     max_results: String(maxResults),
   });
 
-  const response = await fetch(`${ARXIV_API_URL}?${params.toString()}`, {
-    headers: { "User-Agent": USER_AGENT },
-  });
-
-  if (!response.ok) {
-    throw new Error(`arXiv API error: ${response.status} ${response.statusText}`);
+  // arXiv returns 503 when it's busy / asking us to slow down. Retry a few times
+  // with backoff before giving up — a single 503 is almost always transient.
+  const maxRetries = 3;
+  let response: Response | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    response = await fetch(`${ARXIV_API_URL}?${params.toString()}`, {
+      headers: { "User-Agent": USER_AGENT },
+    });
+    if (response.ok) break;
+    const retryable = response.status === 503 || response.status >= 500 || response.status === 429;
+    if (!retryable || attempt === maxRetries) {
+      throw new Error(`arXiv API error: ${response.status} ${response.statusText}`);
+    }
+    const backoffMs = 2 ** attempt * 1500; // 1.5s, 3s, 6s
+    console.warn(
+      `[arxiv] ${response.status}, retrying in ${backoffMs}ms (attempt ${attempt + 1}/${maxRetries})`
+    );
+    await sleep(backoffMs);
   }
 
-  const xml = await response.text();
+  const xml = await response!.text();
   const parser = new XMLParser({ ignoreAttributes: false });
   const parsed = parser.parse(xml);
 
