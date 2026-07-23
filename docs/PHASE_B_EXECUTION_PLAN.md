@@ -1,9 +1,9 @@
 # Thai AI Paper Feed — Phase B Execution Plan (Fine-tune + Serve)
 
 > ต่อจาก Phase A (เว็บที่ใช้ Gemini สรุป) — Phase B คือเทรนโมเดลเราเองมาแทน Gemini
-> เป้าหมาย: distill Gemini → OpenThaiGPT 7B → รันจริงในเว็บ
-> โมเดล: `openthaigpt/openthaigpt1.5-7b-instruct`
-> Dataset: bulk-gen ~500 ใบด้วยวิธี Phase A
+> เป้าหมาย: distill Gemini → เทรน 2 เคสเทียบกัน → เลือกตัวที่ดีสุด → รันจริงในเว็บ
+> โมเดล: ลอง 2 เคส (ดู Stage 2) แล้วเลือกผู้ชนะ
+> Dataset: bulk-gen 400 ใบด้วยวิธี Phase A (train 340 / test 60)
 > ปลายทาง: เทรนสำเร็จ + วัดผลได้ + สลับมาใช้ในเว็บจริง
 
 ---
@@ -11,30 +11,32 @@
 ## 0. ภาพรวมทั้ง Phase B
 
 ```
-[1] เตรียม dataset   bulk-gen 500 ใบ (Gemini) → จัด ChatML → split train/test
+[1] เตรียม dataset   bulk-gen 400 ใบ (Gemini) → จัด ChatML → split train/test
         ↓
-[2] เทรน            Unsloth + QLoRA บน Colab (OpenThaiGPT 7B)
+[2] เทรน 2 เคส       Unsloth Studio บน Colab
+                     เคส A: 7-8B + QLoRA (4-bit)
+                     เคส B: 3-4B + LoRA (16-bit)
         ↓
-[3] วัดผล            เทียบ base vs fine-tuned vs Gemini (มีตัวเลข)
+[3] วัดผล            เทียบ base vs เคส A vs เคส B vs Gemini (มีตัวเลข) → เลือกผู้ชนะ
         ↓
-[4] บีบ + push       merge → GGUF Q4 → ขึ้น Hugging Face Hub
+[4] บีบ + push       merge → GGUF Q4 → ขึ้น Hugging Face Hub (ตัวที่ชนะ)
         ↓
 [5] เสียบเข้าเว็บ     สลับ pipeline จาก Gemini API → โมเดลเรา
 ```
 
-> ⚠️ หมายเหตุ 7B: ตัวนี้ใหญ่กว่า 3-4B → **เทรน**บน Colab T4 ฟรียัง "ได้แต่ตึง" และ **รัน**บน CPU ช้ากว่า ดูข้อ 4-5 เรื่องทางเลือก serve
+> ⚠️ หมายเหตุขนาดโมเดล: เคส A (7-8B) ceiling ความสามารถสูงกว่าแต่กิน VRAM/เทรนช้ากว่า, เคส B (3-4B) เบากว่า/เทรนเร็วกว่าแต่ ceiling ต่ำกว่า — รันทั้งคู่เพราะ dataset เล็ก ต้นทุนไม่แพง แล้วให้ Stage 3 ตัดสินด้วยตัวเลขจริงว่าเคสไหนคุ้มกว่าสำหรับ **serve** ด้วย (ดูข้อ 4-5 เรื่องทางเลือก serve ประกอบการตัดสินใจ)
 
 ---
 
 ## STAGE 1 — เตรียม Dataset (~1-2 วัน)
 
-### 1.1 Bulk-generate 500 คู่ (วิธี Phase A)
+### 1.1 Bulk-generate 400 คู่ (วิธี Phase A) — เสร็จแล้ว
 
-- ดึง abstract จาก arXiv (cs.CL + cs.AI) ~500 ใบ — ผสมเปเปอร์ใหม่ + เก่า top-cited ให้หลากหลาย
+- ดึง abstract จาก arXiv (cs.CL + cs.AI) 400 ใบ — ผสมเปเปอร์ใหม่ + เก่า top-cited ให้หลากหลาย
 - ส่งเข้า Gemini (`gemini-3.1-flash-lite` — โควต้าจริงของเรา 500/วัน, 15 RPM) ให้คืน JSON การ์ดไทย (title_th, summary_th, wow_point, tags) แบบเดียวกับ Phase A
 - **หน่วง ~4-5 วิ/ใบ + retry backoff** กัน 429
-- **ทดสอบ prompt กับ 5-10 ใบให้นิ่งก่อน** ค่อยยิง batch 500 (โควต้ามี buffer แค่ ~100 อย่าเผา)
-- ถ้าอยากได้เกิน 500 ในวันเดียว → เสริม Gemma 4 (1,500/วัน อีกถังแยก)
+- **ทดสอบ prompt กับ 5-10 ใบให้นิ่งก่อน** ค่อยยิง batch เต็ม (โควต้ามี buffer แค่ ~100 อย่าเผา)
+- ถ้าอยากได้เพิ่มเกิน 400 ในอนาคต → เสริม Gemma 4 (1,500/วัน อีกถังแยก)
 
 ### 1.2 คุมคุณภาพ (สำคัญกว่าจำนวน)
 
@@ -52,8 +54,8 @@
   "assistant": "<การ์ดไทย JSON ที่ Gemini สร้าง>"
 }
 ```
-- ใช้ `tokenizer.apply_chat_template()` ของ OpenThaiGPT (เป็น ChatML `<|im_start|>` — ตรงกับที่เรียนมา)
-- **shuffle ก่อน split** → train 85% (~425) / test 15% (~75)
+- เก็บเป็น system/user/assistant กลางแบบนี้ไว้ก่อน — ตอนเทรนแต่ละเคส (Stage 2) ให้ Unsloth Studio/`apply_chat_template()` แปลงเป็น chat template ของโมเดลนั้นๆ เอง (เคส A = Qwen2.5 ChatML `<|im_start|>`, เคส B = Gemma chat format) เพราะตอนนี้ยังไม่ fix โมเดลตัวเดียว
+- **shuffle ก่อน split** → train 85% (340) / test 15% (60)
 - **กันไฟล์ test แยก ห้ามแตะจนวัดผล**
 - เซฟเป็น `.jsonl` (train.jsonl / test.jsonl) เก็บใน Google Drive (กัน Colab รีเซ็ต)
 
@@ -61,45 +63,48 @@
 
 ---
 
-## STAGE 2 — เทรนบน Colab (~1-2 วัน รวมลองผิดลองถูก)
+## STAGE 2 — เทรน 2 เคสด้วย Unsloth Studio บน Colab (~1-2 วัน รวมลองผิดลองถูก)
 
-### 2.1 เตรียม Colab
+> เปลี่ยนจากเขียน training script เอง → ใช้ **Unsloth Studio** (no-code web UI ของ Unsloth) ผ่าน Colab notebook ทางการ: `Unsloth_Studio_Colab.ipynb` (จาก repo `unslothai/unsloth`) — เปิด Colab, เลือก **T4 GPU** (ฟรี), รัน "Run all" แล้วเปิด UI ที่ pop up ขึ้นมา รองรับทั้ง LoRA/QLoRA, มี live loss dashboard, และ export เป็น GGUF/safetensors ได้ในตัว
 
-- เปิด Colab → Runtime → เลือก **T4 GPU** (ฟรี)
-- ติดตั้ง Unsloth (`pip install unsloth`)
-- โครง notebook: ยืมของพี่เลี้ยง (typhoon + Unsloth) มาเป็นแม่แบบ เปลี่ยนแค่ (ก) ชื่อโมเดล เป็น OpenThaiGPT 7B (ข) dataset เป็นของเรา
+### 2.1 เคส A — 7-8B + QLoRA (ceiling สูงสุด)
 
-### 2.2 โหลดโมเดลแบบ QLoRA
-
-- โหลด `openthaigpt/openthaigpt1.5-7b-instruct` แบบ 4-bit (QLoRA) ผ่าน Unsloth
-- ใส่ LoRA adapter: `r=16, alpha=16, target ทุก linear layers`
+- โมเดล: `scb10x/typhoon2-qwen2.5-7b-instruct` (แม่นกว่า OpenThaiGPT 1.5-7B ทั้งอังกฤษ/ไทยจาก benchmark — ฐานเดียวกันคือ Qwen2.5 แต่ tune ดีกว่า)
+- โหลดแบบ 4-bit (QLoRA) ใน Studio, LoRA adapter: `r=16, alpha=16, target ทุก linear layers`
 - **7B + QLoRA บน T4 16GB = ได้แต่ต้องประหยัด**: `batch=1`, `grad accumulation=8`, `max_seq_length=4096` (พอสำหรับ abstract+การ์ด) — ถ้า OOM ให้ลด max_seq_length เหลือ 3072 หรือ 2048
 
-### 2.3 เทรน
+### 2.2 เคส B — 3-4B + LoRA เต็ม 16-bit (เบา/เร็ว/ไม่มี quantization error)
 
-- `epochs=2-3`, `lr=2e-4`, warmup นิดหน่อย
-- **checkpoint ทุก ~50 steps ขึ้น Drive** (กัน Colab หลุดกลางคัน — 7B เทรนนานกว่า เสี่ยงหลุดกว่า)
+- โมเดล: `google/gemma-4-E4B-it` (Gemma 4, ~4B effective params, multilingual 140+ ภาษารวมไทย) — **สุ่มตรวจ 5-10 ใบก่อนรันเต็ม** ว่าคุณภาพภาษาไทยของ base model โอเคพอจะ fine-tune ต่อ (แบบเดียวกับที่ Stage 1.1 ทำกับ prompt Gemini)
+- โหลดแบบ 16-bit เต็ม (ไม่ต้อง quantize เพราะ 3-4B พอดี VRAM T4) → LoRA adapter เดิม `r=16, alpha=16`
+- ข้อดี: ไม่มี quantization noise ตอนเทรน, VRAM เหลือเยอะกว่า → ใช้ `max_seq_length` ยาวขึ้น/batch ใหญ่ขึ้นได้ถ้าต้องการ
+
+### 2.3 เทรนทั้งสองเคส
+
+- `epochs=2-3`, `lr=2e-4`, warmup นิดหน่อย (ปรับตามที่ Studio แนะนำได้)
+- **checkpoint บ่อยๆ ขึ้น Drive** (กัน Colab หลุดกลางคัน — โดยเฉพาะเคส A ที่เทรนนานกว่า)
 - ดู training loss ควรค่อยๆ ลง — ถ้านิ่งเร็ว/ไม่ลง = lr หรือ data มีปัญหา
-- เทรนเสร็จ merge LoRA เข้า base เก็บไว้ (ยังอยู่บน Colab/Drive)
+- เทรนเสร็จแต่ละเคส → export/merge LoRA เข้า base เก็บไว้ (ยังอยู่บน Colab/Drive หรือ export ตรงจาก Studio)
 
-### 2.4 ถ้า OOM (แผนสำรอง)
+### 2.4 ถ้า OOM (แผนสำรองเฉพาะเคส A)
 
 1. ลด max_seq_length
 2. ลด batch (แต่ batch=1 อยู่แล้ว → ใช้ grad accumulation แทน)
-3. ถ้ายังไม่ไหวจริงๆ → **fallback เป็น Typhoon 3B** (แผนนี้ทำงานกับ 3B ได้ทันทีโดยแทบไม่แก้อะไร) — อย่าฝืน 7B จนเสียเวลาหลายวัน
+3. ถ้ายังไม่ไหวจริงๆ → ตัดเคส A ออก เหลือแค่เคส B เป็นหลัก (ไม่ต้องฝืน 7B จนเสียเวลาหลายวัน — เคส B ยังให้ผลเปรียบเทียบกับ base/Gemini ได้ครบ)
 
-**Deliverable Stage 2:** โมเดล fine-tuned (merged) บน Drive
+**Deliverable Stage 2:** โมเดล fine-tuned (merged) 2 ตัว บน Drive/HF — เคส A และเคส B
 
 ---
 
 ## STAGE 3 — วัดผล (~1 วัน) ← หัวใจ portfolio
 
-### 3.1 เตรียม 3 ผู้เข้าแข่ง
+### 3.1 เตรียม 4 ผู้เข้าแข่ง
 
-รัน test set (~75 ใบ) ผ่าน:
-1. **base** OpenThaiGPT 7B (ยังไม่เทรน) — zero-shot
-2. **fine-tuned** ของเรา
-3. **Gemini** (teacher — เพดานอ้างอิง)
+รัน test set (60 ใบ) ผ่าน:
+1. **base เคส A** (7-8B, ยังไม่เทรน) — zero-shot
+2. **fine-tuned เคส A** (7-8B + QLoRA)
+3. **fine-tuned เคส B** (3-4B + LoRA) — เทียบกับ base เคส B แบบ spot-check ได้ถ้ามีเวลา แต่ตัวหลักที่ต้องมีคือ fine-tuned
+4. **Gemini** (teacher — เพดานอ้างอิง, `gemini-3.1-flash-lite`)
 
 ### 3.2 วัด 2 แบบ
 
@@ -109,16 +114,18 @@
 - ศัพท์เทคนิคไม่ถูกแปลมั่ว (เช็คด้วย keyword list เช่น LLM/RAG/agent ต้องคงอังกฤษ)
 
 **LLM-as-judge:**
-- ใช้ **judge คนละเจ้ากับ teacher** (teacher=Gemini → judge=Claude หรือกลับกัน) เลี่ยง bias
+- **judge = Claude (Sonnet 5)** — คนละเจ้ากับ teacher (Gemini) ตั้งใจเลือกเพราะงานวิจัยล่าสุดชี้ว่า Claude judge มักมีอคติแบบ "ตัดคะแนนตัวเองหนักกว่า" (under-prefer ผลลัพธ์ตระกูล Claude เอง) ไม่ใช่เอียงเข้าข้างตัวเอง — ปลอดภัยกว่าในการเป็น judge ให้ teacher จากค่าย Gemini
 - ให้คะแนน 1-5: ความถูกต้อง / ความเป็นธรรมชาติภาษาไทย / คุณภาพจุดว้าว
-- เทียบ 3 ผู้เข้าแข่งแบบ blind
+- เทียบ 4 ผู้เข้าแข่งแบบ blind
 
-### 3.3 สรุปเป็นตาราง
+### 3.3 สรุปเป็นตาราง + เลือกผู้ชนะ
 
 ทำตารางเทียบ → ลง README + (ถ้ามีเวลา) blog post
-คาดหวัง: fine-tuned ควร **ดีกว่า base ชัดเจน** และ **เข้าใกล้ Gemini** (ไม่ต้องชนะ)
+คาดหวัง: ทั้งสองเคส fine-tuned ควร **ดีกว่า base ชัดเจน** และ **เข้าใกล้ Gemini** (ไม่ต้องชนะ)
 
-**Deliverable Stage 3:** ตารางผลเทียบ 3 ระบบ
+**เกณฑ์เลือกผู้ชนะไป Stage 4-5:** ไม่ใช่แค่คะแนนสูงสุด — ชั่งน้ำหนักกับต้นทุน serve ด้วย (เคส A แม่นกว่าแต่ serve หนักกว่า/ช้ากว่าตาม STAGE 5.1) ถ้าคะแนนต่างกันไม่มาก เลือกเคส B (เบากว่า) คุ้มกว่าสำหรับรันจริง แต่ถ้าเคส A แม่นกว่าชัดเจนและงบ serve พอไหว ให้เลือกเคส A — ตัดสินด้วยตัวเลขจาก 3.2 จริง ไม่เดา
+
+**Deliverable Stage 3:** ตารางผลเทียบ 4 ระบบ + สรุปว่าเลือกเคสไหนไปต่อ (พร้อมเหตุผล)
 
 ---
 
@@ -126,7 +133,7 @@
 
 ### 4.1 Quantize เป็น GGUF
 
-- ใช้ Unsloth `save_pretrained_gguf()` แปลง merged model → **GGUF Q4_K_M** (บรรทัดเดียว)
+- ทำเฉพาะ **โมเดลที่ชนะจาก Stage 3** (เคส A หรือเคส B อย่างใดอย่างหนึ่ง) — export ตรงจาก Unsloth Studio หรือใช้ `save_pretrained_gguf()` แปลง merged model → **GGUF Q4_K_M**
 - Q4 = เล็กพอรัน CPU, คุณภาพดรอปนิดเดียว — ถ้าดรอปแรงลอง Q5_K_M
 - **eval ซ้ำหลัง quantize** (โครงเดิมจาก Stage 3 กับ test set) — เทียบว่าดรอปแค่ไหน
 
@@ -153,7 +160,7 @@
 
 **คำแนะนำ:** เริ่ม **วิธี A** ก่อน (ฟรีแท้ + ได้เรียน MLOps) โดย **คุมจำนวนเปเปอร์/วัน ≤ 10 ใบ** เพื่อให้เวลารวมไม่เกิน GitHub Actions free (2,000 นาที/เดือน) — ถ้า 7B ช้าเกินทน ค่อยย้าย on-demand ไป **วิธี B (Modal)**
 
-> ถ้าใช้ Typhoon 3B (fallback) → วิธี A สบายมาก ~2 นาที/ใบ นี่คืออีกเหตุผลที่ 3B ปลอดภัยกว่าถ้าเป้าหมายคือ "ฟรี + รันจริง"
+> ถ้าเลือกเคส B (3-4B) ไปต่อ → วิธี A สบายมาก ~2 นาที/ใบ นี่คืออีกเหตุผลที่โมเดลเล็กปลอดภัยกว่าถ้าเป้าหมายคือ "ฟรี + รันจริง" (เป็นปัจจัยหนึ่งที่ต้องชั่งใน Stage 3.3 ตอนเลือกผู้ชนะ)
 
 ### 5.2 pipeline ใหม่
 
@@ -195,20 +202,21 @@ GitHub Actions cron (เช้า) →
 
 | ความเสี่ยง | แผนรับ |
 |---|---|
-| 7B OOM ตอนเทรน | ลด max_seq_length → ไม่ไหว fallback Typhoon 3B (แผนเดิมใช้ได้ทันที) |
-| 7B ช้าเกินตอน serve CPU | คุม ≤10 ใบ/วัน หรือย้าย Modal หรือใช้ 3B |
-| Colab หลุดกลางเทรน | checkpoint ทุก 50 steps ขึ้น Drive |
+| เคส A (7-8B) OOM ตอนเทรน | ลด max_seq_length → ไม่ไหว ตัดเคส A เหลือแค่เคส B (ยังเทียบกับ base/Gemini ได้ครบ) |
+| เคส A ช้าเกินตอน serve CPU | คุม ≤10 ใบ/วัน หรือย้าย Modal หรือเลือกเคส B ไปต่อแทน |
+| Colab หลุดกลางเทรน | checkpoint บ่อยๆ ขึ้น Drive (เคส A เสี่ยงกว่าเพราะเทรนนานกว่า) |
 | โมเดลสรุปมั่ว/JSON พัง | Gemini fallback ในเว็บ + validate ก่อนเขียน DB |
 | dataset teacher คุณภาพไม่นิ่ง | ตรวจ 15% + แก้ prompt ก่อนยิง batch ใหญ่ |
+| gemma-4-E4B-it ภาษาไทยไม่นิ่งพอ (โมเดลใหม่ ยังไม่มี benchmark ไทยชัดเจน) | สุ่มตรวจ 5-10 ใบก่อนเทรนเต็ม (ดู Stage 2.2) → ถ้าไม่ผ่าน สลับเคส B เป็น Qwen2.5-3B-Instruct แทน |
 
 ---
 
 ## Checklist "Phase B เสร็จ"
 
-- [ ] มี train.jsonl / test.jsonl (~500 คู่) คุณภาพตรวจแล้ว
-- [ ] เทรน OpenThaiGPT 7B จบ ไม่ OOM (หรือ fallback 3B)
-- [ ] มีตารางเทียบ base vs fine-tuned vs Gemini
-- [ ] โมเดล GGUF อยู่บน HF Hub + model card
+- [x] มี train.jsonl (340) / test.jsonl (60) คุณภาพตรวจแล้ว
+- [ ] เทรนจบทั้งเคส A (7-8B+QLoRA) และเคส B (3-4B+LoRA) ด้วย Unsloth Studio ไม่ OOM (หรืออย่างน้อยเคส B)
+- [ ] มีตารางเทียบ base vs เคส A vs เคส B vs Gemini + สรุปว่าเลือกเคสไหนไปต่อพร้อมเหตุผล
+- [ ] โมเดล GGUF (ตัวที่ชนะ) อยู่บน HF Hub + model card
 - [ ] เว็บดึงเปเปอร์ + สรุปด้วยโมเดลเราได้จริง (Gemini เป็น fallback)
 - [ ] README เล่า journey Phase A→B + ผล eval
 
