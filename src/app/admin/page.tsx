@@ -14,6 +14,9 @@ export default function AdminPage() {
   const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [result, setResult] = useState<IngestResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // Secret is typed in, never hardcoded in the client bundle. It's sent to the
+  // protected /api/ingest route as a bearer token.
+  const [secret, setSecret] = useState("");
 
   async function handleIngest() {
     setStatus("loading");
@@ -21,7 +24,10 @@ export default function AdminPage() {
     setErrorMessage(null);
 
     try {
-      const response = await fetch("/api/ingest");
+      const response = await fetch("/api/ingest", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${secret}` },
+      });
       const data = await response.json();
 
       if (!response.ok) {
@@ -44,10 +50,18 @@ export default function AdminPage() {
         (ข้ามใบที่มีอยู่แล้ว)
       </p>
 
+      <input
+        type="password"
+        value={secret}
+        onChange={(e) => setSecret(e.target.value)}
+        placeholder="Ingest secret"
+        className="mt-6 w-full rounded-xl border border-zinc-300 px-4 py-3 text-base text-zinc-900 outline-none focus:border-indigo-500"
+      />
+
       <button
         onClick={handleIngest}
-        disabled={status === "loading"}
-        className="mt-6 w-full rounded-xl bg-indigo-600 px-4 py-3 text-base font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+        disabled={status === "loading" || secret.length === 0}
+        className="mt-3 w-full rounded-xl bg-indigo-600 px-4 py-3 text-base font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {status === "loading" ? "กำลังดึงข้อมูล... (อาจใช้เวลาสักครู่)" : "ดึงเปเปอร์ใหม่"}
       </button>

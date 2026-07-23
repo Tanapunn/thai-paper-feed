@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { fetchLatestPapers } from "@/lib/arxiv";
 import { summarizePaper } from "@/lib/gemini";
 import { supabaseAdmin } from "@/lib/supabase/server";
@@ -12,7 +12,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function GET() {
+/**
+ * This route burns Gemini quota + writes the DB, so it must never be triggerable
+ * by an anonymous request (or by a bot/prefetch hitting a GET). Require a shared
+ * secret via `Authorization: Bearer <INGEST_SECRET>`, and fail CLOSED if the secret
+ * isn't configured — an unconfigured deploy denies everything rather than open up.
+ * The /admin button and the Stage 5 cron both send this same header.
+ */
+function isAuthorized(request: NextRequest): boolean {
+  const secret = process.env.INGEST_SECRET;
+  if (!secret) return false; // fail closed
+  const header = request.headers.get("authorization") ?? "";
+  return header === `Bearer ${secret}`;
+}
+
+export async function POST(request: NextRequest) {
+  if (!isAuthorized(request)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const papers = await fetchLatestPapers(20);
 
   const { data: existingRows, error: selectError } = await supabaseAdmin
