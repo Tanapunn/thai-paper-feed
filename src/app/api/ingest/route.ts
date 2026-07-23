@@ -37,6 +37,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  try {
   const papers = await fetchLatestPapers(20);
 
   const { data: existingRows, error: selectError } = await supabaseAdmin
@@ -48,7 +49,7 @@ export async function POST(request: NextRequest) {
     );
 
   if (selectError) {
-    return NextResponse.json({ error: selectError.message }, { status: 500 });
+    return NextResponse.json({ error: `supabase select: ${selectError.message}` }, { status: 500 });
   }
 
   const existingIds = new Set((existingRows ?? []).map((row) => row.id as string));
@@ -114,4 +115,12 @@ export async function POST(request: NextRequest) {
     remaining,
     failed,
   });
+  } catch (err) {
+    // Anything thrown outside the per-paper loop (arXiv fetch, client init,
+    // Supabase network error) lands here — return the real message as JSON so
+    // the admin UI shows the cause instead of a bare "HTTP 500".
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[ingest] fatal: ${message}`);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
