@@ -3,8 +3,9 @@ import { fetchLatestPapers } from "@/lib/arxiv";
 import { summarizePaper } from "@/lib/gemini";
 import { supabaseAdmin } from "@/lib/supabase/server";
 
-// Vercel Hobby plan hard cap for serverless functions.
-export const maxDuration = 60;
+// Vercel now allows up to 300s on all plans (Fluid Compute). We still cap the
+// batch below so a run finishes comfortably even if the effective limit is lower.
+export const maxDuration = 300;
 
 const DELAY_BETWEEN_GEMINI_CALLS_MS = 4000;
 
@@ -12,7 +13,7 @@ const DELAY_BETWEEN_GEMINI_CALLS_MS = 4000;
 // finish a handful before hitting maxDuration (60s). Cap the batch per request
 // and report how many are left — the caller (admin button / cron) just runs again,
 // and already-ingested papers are skipped, so the backlog drains over a few runs.
-const MAX_PER_RUN = 8;
+const MAX_PER_RUN = 5;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
