@@ -82,20 +82,30 @@ export async function fetchLatestPapers(
     max_results: String(maxResults),
   });
 
-  // arXiv returns 503 when it's busy / asking us to slow down. Retry a few times
-  // with backoff before giving up — a single 503 is almost always transient.
-  const maxRetries = 3;
+  // 503 = arXiv is momentarily busy; retrying after a short pause usually works.
+  // 429 = arXiv is explicitly telling us to STOP. Retrying inside the same request
+  // only extends the cooldown, so we bail out immediately with a message the admin
+  // UI can act on. (We learned this the hard way: retrying 429s kept us blocked.)
+  const maxRetries = 2;
   let response: Response | null = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     response = await fetch(`${ARXIV_API_URL}?${params.toString()}`, {
       headers: { "User-Agent": USER_AGENT },
     });
     if (response.ok) break;
-    const retryable = response.status === 503 || response.status >= 500 || response.status === 429;
+
+    if (response.status === 429) {
+      const retryAfter = response.headers.get("retry-after");
+      throw new Error(
+        `arXiv กำลังจำกัดอัตราการเรียก (429) — เว้นสัก ${retryAfter ? `${retryAfter} วินาที` : "10-60 นาที"} แล้วค่อยกดใหม่ (การกดซ้ำถี่ๆ จะยิ่งยืดเวลาบล็อก)`
+      );
+    }
+
+    const retryable = response.status >= 500;
     if (!retryable || attempt === maxRetries) {
       throw new Error(`arXiv API error: ${response.status} ${response.statusText}`);
     }
-    const backoffMs = 2 ** attempt * 1500; // 1.5s, 3s, 6s
+    const backoffMs = 2 ** attempt * 2000; // 2s, 4s
     console.warn(
       `[arxiv] ${response.status}, retrying in ${backoffMs}ms (attempt ${attempt + 1}/${maxRetries})`
     );
