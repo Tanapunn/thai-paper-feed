@@ -60,6 +60,21 @@
     "english_tokens_median": 8
   },
   {
+    "system": "gguf_q4",
+    "n": 60,
+    "syntax_of_completed": 1.0,
+    "fits_budget": 1.0,
+    "usable": 1.0,
+    "valid": 60,
+    "truncated": 0,
+    "completed": 60,
+    "fields_complete": 60,
+    "card_len_median": 419,
+    "raw_len_median": 480,
+    "raw_len_max": 595,
+    "english_tokens_median": 8
+  },
+  {
     "system": "gemini",
     "n": 60,
     "syntax_of_completed": 1.0,
