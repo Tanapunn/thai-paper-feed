@@ -30,13 +30,23 @@ image = (
         "nvidia/cuda:12.4.1-devel-ubuntu22.04", add_python="3.11"
     )
     .apt_install("git", "build-essential", "cmake")
-    .env({"CMAKE_ARGS": "-DGGML_CUDA=on", "FORCE_CMAKE": "1"})
+    # Modal's builder defaults CC=clang, but we only ship gcc — pin gcc/g++ so
+    # CMake finds a real compiler when building llama-cpp with CUDA.
+    .env(
+        {
+            "CMAKE_ARGS": "-DGGML_CUDA=on",
+            "FORCE_CMAKE": "1",
+            "CC": "gcc",
+            "CXX": "g++",
+            "HF_HUB_ENABLE_HF_TRANSFER": "1",
+        }
+    )
     .pip_install(
         "llama-cpp-python",
-        "huggingface_hub[hf_transfer]",
+        "huggingface_hub",
+        "hf_transfer",
         "fastapi[standard]",
     )
-    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
 )
 
 cache = modal.Volume.from_name("thai-summarizer-cache", create_if_missing=True)
