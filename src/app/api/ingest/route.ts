@@ -1,30 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchLatestPapers } from "@/lib/arxiv";
-import { summarizePaper } from "@/lib/gemini";
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { ingestWeek } from "@/lib/ingest";
 
-// Vercel now allows up to 300s on all plans (Fluid Compute). We still cap the
-// batch below so a run finishes comfortably even if the effective limit is lower.
+// Vercel allows up to 300s on all plans (Fluid Compute). One weekly edition is
+// ≤10 papers summarized in a single batch call to our model, so a run fits well
+// within that even counting a cold start on the Modal container.
 export const maxDuration = 300;
 
-const DELAY_BETWEEN_GEMINI_CALLS_MS = 4000;
-
-// Each new paper costs ~4s (rate-limit delay) + Gemini latency, so we can only
-// finish a handful before hitting maxDuration (60s). Cap the batch per request
-// and report how many are left — the caller (admin button / cron) just runs again,
-// and already-ingested papers are skipped, so the backlog drains over a few runs.
-const MAX_PER_RUN = 5;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 /**
- * This route burns Gemini quota + writes the DB, so it must never be triggerable
- * by an anonymous request (or by a bot/prefetch hitting a GET). Require a shared
- * secret via `Authorization: Bearer <INGEST_SECRET>`, and fail CLOSED if the secret
- * isn't configured — an unconfigured deploy denies everything rather than open up.
- * The /admin button and the Stage 5 cron both send this same header.
+ * Burns Gemini quota (fallback path) + writes the DB, so it must never be
+ * triggerable anonymously. Require `Authorization: Bearer <INGEST_SECRET>` and
+ * fail CLOSED if the secret isn't configured. The /admin button and the Stage 5
+ * cron both send this same header.
  */
 function isAuthorized(request: NextRequest): boolean {
   const secret = process.env.INGEST_SECRET;
@@ -38,88 +24,32 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Optional { "week": "YYYY-MM-DD" } (a Monday) to (re)build a specific completed
+  // edition; omit to build the latest completed week. Body may be empty.
+  let weekStart: string | undefined;
   try {
-  const papers = await fetchLatestPapers(20);
-
-  const { data: existingRows, error: selectError } = await supabaseAdmin
-    .from("papers")
-    .select("id")
-    .in(
-      "id",
-      papers.map((p) => p.id)
-    );
-
-  if (selectError) {
-    return NextResponse.json({ error: `supabase select: ${selectError.message}` }, { status: 500 });
+    const body = (await request.json()) as { week?: string } | null;
+    weekStart = body?.week;
+  } catch {
+    /* no/invalid body → latest week */
   }
 
-  const existingIds = new Set((existingRows ?? []).map((row) => row.id as string));
-  const allNew = papers.filter((p) => !existingIds.has(p.id));
-  // Process at most MAX_PER_RUN this invocation so we return before the timeout.
-  const newPapers = allNew.slice(0, MAX_PER_RUN);
-  const remaining = allNew.length - newPapers.length;
-
-  console.log(
-    `[ingest] fetched ${papers.length}, already in DB: ${existingIds.size}, ` +
-      `new: ${allNew.length}, processing: ${newPapers.length}, remaining after: ${remaining}`
-  );
-
-  const inserted: string[] = [];
-  const failed: { id: string; error: string }[] = [];
-
-  for (let i = 0; i < newPapers.length; i++) {
-    const paper = newPapers[i];
-    try {
-      console.log(`[ingest] summarizing [${paper.id}] ${paper.titleEn.slice(0, 60)}`);
-      const summary = await summarizePaper(paper.titleEn, paper.abstractEn);
-
-      const { error: upsertError } = await supabaseAdmin.from("papers").upsert(
-        {
-          id: paper.id,
-          arxiv_url: paper.arxivUrl,
-          pdf_url: paper.pdfUrl,
-          title_en: paper.titleEn,
-          abstract_en: paper.abstractEn,
-          authors: paper.authors,
-          category: paper.category,
-          published_at: paper.publishedAt,
-          title_th: summary.title_th,
-          summary_th: summary.summary_th,
-          wow_point: summary.wow_point,
-          tags: summary.tags,
-        },
-        { onConflict: "id" }
+  try {
+    const result = await ingestWeek(weekStart);
+    if (!result) {
+      return NextResponse.json(
+        { message: "no completed edition to ingest", week: weekStart ?? null },
+        { status: 200 }
       );
-
-      if (upsertError) {
-        throw new Error(upsertError.message);
-      }
-
-      inserted.push(paper.id);
-      console.log(`[ingest] upserted [${paper.id}]`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[ingest] failed [${paper.id}]: ${message}`);
-      failed.push({ id: paper.id, error: message });
     }
-
-    if (i < newPapers.length - 1) {
-      await sleep(DELAY_BETWEEN_GEMINI_CALLS_MS);
-    }
-  }
-
-  return NextResponse.json({
-    fetched: papers.length,
-    skippedExisting: existingIds.size,
-    inserted: inserted.length,
-    insertedIds: inserted,
-    remaining,
-    failed,
-  });
+    console.log(
+      `[ingest] week ${result.week}: candidates ${result.candidates}, ` +
+        `alreadyInDb ${result.alreadyInDb}, inserted ${result.inserted.length} ` +
+        `(ours ${result.bySummarizer.ours}, gemini ${result.bySummarizer.gemini}), ` +
+        `failed ${result.failed.length}`
+    );
+    return NextResponse.json(result);
   } catch (err) {
-    // Anything thrown outside the per-paper loop (arXiv fetch, client init,
-    // Supabase network error) lands here — return the real message as JSON so
-    // the admin UI shows the cause instead of a bare "HTTP 500".
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[ingest] fatal: ${message}`);
     return NextResponse.json({ error: message }, { status: 500 });
