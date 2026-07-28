@@ -1,67 +1,89 @@
-import Link from "next/link";
-import { getPapers } from "@/lib/papers";
+import { getWeeks, getPapersByWeek } from "@/lib/papers";
+import { PaperCard } from "@/components/PaperCard";
+import { WeekCalendar } from "@/components/WeekCalendar";
+import {
+  currentWeekStart,
+  formatWeekRange,
+  isoWeek,
+  slugToWeekStart,
+} from "@/lib/week";
 
 export const dynamic = "force-dynamic";
 
-export default async function Home() {
-  const papers = await getPapers();
+// Weekly digest home. `?week=2026-w29` selects an edition; no param shows the
+// latest. Chrome (header, calendar, footer) is English; the cards stay Thai.
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<{ week?: string }>;
+}) {
+  const { week: weekParam } = await searchParams;
+  const weeks = await getWeeks(); // weekStarts, newest first
+
+  if (weeks.length === 0) {
+    return (
+      <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-16 text-center">
+        <h1 className="text-2xl font-bold text-zinc-900">Paper Week</h1>
+        <p className="mt-3 text-zinc-500">No editions yet. Check back soon.</p>
+      </main>
+    );
+  }
+
+  // Resolve which edition to show: the requested week if it exists, else latest.
+  const requested = weekParam ? slugToWeekStart(weekParam) : null;
+  const activeWeek =
+    requested && weeks.includes(requested) ? requested : weeks[0];
+  const isLatest = activeWeek === weeks[0];
+
+  const papers = await getPapersByWeek(activeWeek);
+  const { week: weekNo } = isoWeek(activeWeek);
 
   return (
-    <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-6 sm:py-10">
-      <header className="mb-6">
-        <h1 className="text-2xl font-bold text-zinc-900">🧠 Thai AI Paper Feed</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          สรุปเปเปอร์ AI ใหม่ๆ เป็นภาษาไทย อ่านเล่นเจอของว้าว
-        </p>
-      </header>
+    <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-4 py-6 sm:py-10 md:flex-row">
+      {/* Calendar nav */}
+      <aside className="md:w-60 md:shrink-0">
+        <WeekCalendar
+          weeks={weeks}
+          activeWeek={activeWeek}
+          currentWeek={currentWeekStart()}
+        />
+      </aside>
 
-      {papers.length === 0 ? (
-        <p className="text-center text-zinc-500">ยังไม่มีเปเปอร์ในระบบ</p>
-      ) : (
-        <ul className="flex flex-col gap-4">
-          {papers.map((paper) => (
-            <li key={paper.id}>
-              <Link
-                href={`/paper/${paper.id}`}
-                className="block rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm transition hover:border-zinc-300 hover:shadow-md sm:p-5"
-              >
-                <h2 className="text-lg font-bold leading-snug text-zinc-900 break-words">
-                  {paper.title_th ?? paper.title_en}
-                </h2>
+      {/* Edition */}
+      <main className="min-w-0 flex-1">
+        <header className="mb-6 border-b border-zinc-200 pb-4">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-indigo-600">
+              Week {weekNo}
+            </span>
+            {isLatest && (
+              <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-xs font-medium text-white">
+                Latest
+              </span>
+            )}
+          </div>
+          <h1 className="mt-1 text-2xl font-bold text-zinc-900">Weekly Edition</h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            {formatWeekRange(activeWeek)} · {papers.length} papers
+          </p>
+        </header>
 
-                {paper.summary_th && (
-                  <p className="mt-2 text-sm leading-relaxed text-zinc-600 break-words">
-                    {paper.summary_th}
-                  </p>
-                )}
+        {papers.length === 0 ? (
+          <p className="text-center text-zinc-500">No papers in this edition.</p>
+        ) : (
+          <ul className="flex flex-col gap-4">
+            {papers.map((paper) => (
+              <li key={paper.id}>
+                <PaperCard paper={paper} />
+              </li>
+            ))}
+          </ul>
+        )}
 
-                {paper.wow_point && (
-                  <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 break-words">
-                    💡 {paper.wow_point}
-                  </p>
-                )}
-
-                {paper.tags.length > 0 && (
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {paper.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs text-zinc-600"
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                <span className="mt-3 inline-block text-sm font-semibold text-indigo-600">
-                  อ่านต่อ →
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
-    </main>
+        <footer className="mt-10 border-t border-zinc-200 pt-4 text-center text-xs text-zinc-400">
+          powered by our own model · th
+        </footer>
+      </main>
+    </div>
   );
 }
