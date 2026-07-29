@@ -48,3 +48,7 @@ phase-b/data/*
 # python
 __pycache__/
 *.pyc
+
+# stray screenshots dropped at repo root (real docs shots live in docs/screenshots/)
+/Screenshot*.png
+/*.jpg
