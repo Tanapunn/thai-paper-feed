@@ -13,27 +13,68 @@
  * Run (default 8 weeks; each run is idempotent — skips papers already ingested):
  *   npx tsx --env-file=.env.local phase-b/scripts/backfill-weeks.ts
  *   npx tsx --env-file=.env.local phase-b/scripts/backfill-weeks.ts --weeks 4
+ *
+ * Rebuilding ONE week, and/or with a different ranking window. A narrow window
+ * ranks a week against itself instead of against older, more-upvoted papers — so
+ * it gives a much better edition, but only while it still covers that week:
+ *   ... backfill-weeks.ts --week 2026-07-27 --interval "7 Days"
  */
 
-import { fetchWeeklyEditions } from "@/lib/alphaxiv";
+import {
+  fetchWeeklyEditions,
+  BACKFILL_INTERVAL,
+  type FeedInterval,
+} from "@/lib/alphaxiv";
 import { ingestEdition } from "@/lib/ingest";
 
+const VALID_INTERVALS: FeedInterval[] = ["3 Days", "7 Days", "30 Days", "90 Days"];
+
+function argValue(flag: string): string | undefined {
+  const i = process.argv.indexOf(flag);
+  return i !== -1 ? process.argv[i + 1] : undefined;
+}
+
 function parseWeeksArg(): number {
-  const i = process.argv.indexOf("--weeks");
-  if (i !== -1 && process.argv[i + 1]) {
-    const n = Number(process.argv[i + 1]);
+  const raw = argValue("--weeks");
+  if (raw) {
+    const n = Number(raw);
     if (Number.isFinite(n) && n > 0) return Math.floor(n);
   }
   return 8;
 }
 
-async function main() {
-  const weeks = parseWeeksArg();
-  console.log(`Backfilling up to ${weeks} completed weekly edition(s)…\n`);
+function parseIntervalArg(): FeedInterval {
+  const raw = argValue("--interval");
+  if (!raw) return BACKFILL_INTERVAL;
+  if (!VALID_INTERVALS.includes(raw as FeedInterval)) {
+    throw new Error(`--interval must be one of: ${VALID_INTERVALS.join(", ")}`);
+  }
+  return raw as FeedInterval;
+}
 
-  const editions = (await fetchWeeklyEditions(true)).slice(0, weeks);
+async function main() {
+  const interval = parseIntervalArg();
+  const onlyWeek = argValue("--week");
+  const weeks = parseWeeksArg();
+
+  const all = await fetchWeeklyEditions(true, interval);
+  const editions = onlyWeek
+    ? all.filter((e) => e.weekStart === onlyWeek)
+    : all.slice(0, weeks);
+
+  console.log(
+    onlyWeek
+      ? `Rebuilding week ${onlyWeek} using the "${interval}" window…\n`
+      : `Backfilling up to ${weeks} completed weekly edition(s) using "${interval}"…\n`
+  );
+
   if (editions.length === 0) {
-    console.log("No completed editions found in the alphaXiv feed window.");
+    console.log(
+      onlyWeek
+        ? `Week ${onlyWeek} has no edition in the "${interval}" window ` +
+            `(weeks available: ${all.map((e) => e.weekStart).join(", ") || "none"}).`
+        : "No completed editions found in the alphaXiv feed window."
+    );
     return;
   }
 

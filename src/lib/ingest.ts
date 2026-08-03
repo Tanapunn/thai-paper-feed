@@ -1,5 +1,5 @@
-import type { WeeklyEdition, CuratedPaper } from "@/lib/alphaxiv";
-import { fetchWeeklyEditions } from "@/lib/alphaxiv";
+import type { WeeklyEdition, CuratedPaper, FeedInterval } from "@/lib/alphaxiv";
+import { fetchWeeklyEditions, CRON_INTERVAL } from "@/lib/alphaxiv";
 import { summarizeWithModel } from "@/lib/model";
 import { summarizePaper, type GeminiSummary } from "@/lib/gemini";
 import { supabaseAdmin } from "@/lib/supabase/server";
@@ -123,9 +123,16 @@ export async function ingestEdition(edition: WeeklyEdition): Promise<IngestWeekR
  * Fetch the latest complete weekly edition and ingest it. If `weekStart` is given,
  * ingest that specific completed week instead. Returns null if the requested week
  * has no edition (e.g. no qualifying papers, or the current week isn't complete yet).
+ *
+ * `interval` defaults to the weekly-cron window, which only covers the week that
+ * just ended. Pass BACKFILL_INTERVAL to reach further back — an older `weekStart`
+ * under the default window yields a thin edition or none at all.
  */
-export async function ingestWeek(weekStart?: string): Promise<IngestWeekResult | null> {
-  const editions = await fetchWeeklyEditions(true);
+export async function ingestWeek(
+  weekStart?: string,
+  interval: FeedInterval = CRON_INTERVAL
+): Promise<IngestWeekResult | null> {
+  const editions = await fetchWeeklyEditions(true, interval);
   const edition = weekStart
     ? editions.find((e) => e.weekStart === weekStart) ?? null
     : editions[0] ?? null;

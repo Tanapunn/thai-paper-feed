@@ -7,6 +7,16 @@ import { ingestWeek } from "@/lib/ingest";
 export const maxDuration = 300;
 
 /**
+ * Why the schedule is `5 0 * * 1` (Mon 00:05 UTC) and not some friendlier hour:
+ * ingestWeek() ranks candidates inside a window anchored to *now* (CRON_INTERVAL,
+ * 7 days), so the window matches the week we're publishing only right after that
+ * week closes. Every hour we wait blanks out that many hours of the target week's
+ * Monday. The 5-minute offset is deliberate too — firing even a second BEFORE
+ * Monday 00:00 makes isWeekComplete() call the week unfinished, and the run would
+ * silently re-ingest the previous week instead, skipping this one for good.
+ */
+
+/**
  * Weekly cron entry point (see `vercel.json` crons). Vercel invokes cron jobs
  * with GET and — when a `CRON_SECRET` env var is set — automatically attaches
  * `Authorization: Bearer <CRON_SECRET>`. We can't set a custom header on the

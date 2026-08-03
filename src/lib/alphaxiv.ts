@@ -8,10 +8,26 @@ import type { ArxivPaper } from "@/lib/arxiv";
 const ALPHAXIV_FEED_URL = "https://api.alphaxiv.org/papers/v3/feed";
 const USER_AGENT = "ThaiPaperFeed/0.1 (beta; contact: tanapoom21130@gmail.com)";
 
-// One wide pull (top-200 most-liked over 90 days) covers ~13 weeks — enough to
-// backfill the ~8 recent weeks that have solid data.
+// The feed ranks by likes INSIDE `interval` and then cuts at `pageSize`, so the
+// window decides who a paper competes against — not just how far back we can see.
+// Likes are cumulative, so a wide window makes brand-new papers race month-old
+// ones and lose: a 90-day pull surfaced only 1 paper from the week that had just
+// ended, while a 7-day pull surfaced 174 of them. Hence two named windows.
+export type FeedInterval = "3 Days" | "7 Days" | "30 Days" | "90 Days"; // other values → HTTP 400
+
+// The weekly cron publishes the week that just ended, so it scopes the contest to
+// that week. `interval` is a rolling window anchored to *now*, which lines up with
+// the target week only if the cron fires right after the week closes — see the
+// `5 0 * * 1` schedule in vercel.json.
+export const CRON_INTERVAL: FeedInterval = "7 Days";
+// Backfill has to SEE weeks that ended long ago, so it pays the cross-week
+// competition cost. Fine there: those weeks' votes have already settled.
+export const BACKFILL_INTERVAL: FeedInterval = "90 Days";
+
+// 200 is the API's ceiling (500 → HTTP 500). Harmless with a weekly window: the
+// 200th paper had 6 likes against a 52-like cutoff for the edition's top 10, so
+// everything the cut drops was already far out of contention.
 const FEED_PAGE_SIZE = 200;
-const FEED_INTERVAL = "90 Days";
 const WEEKLY_TOP_N = 10;
 // A repo needs a meaningful star count before we flag the paper as "code-notable"
 // rather than merely liked. Used only for the display hint `pickedBy`.
@@ -142,20 +158,29 @@ function toCurated(raw: RawFeedPaper, weekStart: string, rank: number): CuratedP
  * published in that (Monday-started) week. Slug ids and non-AI categories are
  * dropped. Returned newest week first; `onlyComplete` (default) hides the current,
  * still-running week.
+ *
+ * `interval` picks the ranking window: CRON_INTERVAL for the week that just ended,
+ * BACKFILL_INTERVAL to reach older weeks. A window only yields editions for weeks
+ * it actually covers — asking for a week outside it returns few or no papers.
  */
-export async function fetchWeeklyEditions(onlyComplete = true): Promise<WeeklyEdition[]> {
+export async function fetchWeeklyEditions(
+  onlyComplete = true,
+  interval: FeedInterval = CRON_INTERVAL
+): Promise<WeeklyEdition[]> {
   const params = new URLSearchParams({
     pageNum: "0",
     pageSize: String(FEED_PAGE_SIZE),
     sort: "Likes",
-    interval: FEED_INTERVAL,
+    interval,
   });
 
   const response = await fetch(`${ALPHAXIV_FEED_URL}?${params.toString()}`, {
     headers: { "User-Agent": USER_AGENT },
   });
   if (!response.ok) {
-    throw new Error(`alphaXiv feed error: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `alphaXiv feed error (${interval}): ${response.status} ${response.statusText}`
+    );
   }
 
   const data = (await response.json()) as RawFeedResponse;
